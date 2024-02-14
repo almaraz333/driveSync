@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"drive-sync/types"
 	"io"
 	"log"
 	"net/http"
@@ -11,7 +12,7 @@ import (
 	"google.golang.org/api/drive/v3"
 )
 
-func DownloadFile(srv *drive.Service, file *drive.File, dir string, waitGroup *sync.WaitGroup) {
+func DownloadFile(srv *drive.Service, file *drive.File, dir string, waitGroup *sync.WaitGroup, DB *types.DBContainer) {
 	var httpRes *http.Response
 	var err error
 
@@ -25,6 +26,7 @@ func DownloadFile(srv *drive.Service, file *drive.File, dir string, waitGroup *s
 
 	if _, ok := exportMimeTypes[file.MimeType]; ok {
 		httpRes, err = srv.Files.Export(file.Id, "application/pdf").Download()
+
 	} else {
 		httpRes, err = srv.Files.Get(file.Id).Download()
 	}
@@ -48,4 +50,5 @@ func DownloadFile(srv *drive.Service, file *drive.File, dir string, waitGroup *s
 		log.Fatalf("Could not copy file to OS with file path: %v: %v", dir, copyErr.Error())
 	}
 
+	AddFileToDB(file, newFilePath, DB)
 }

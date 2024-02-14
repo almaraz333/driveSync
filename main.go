@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"drive-sync/types"
 	"drive-sync/utils"
+	"errors"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"encoding/json"
 	"fmt"
@@ -25,6 +29,7 @@ func getClient(config *oauth2.Config) *http.Client {
 	// time.
 	tokFile := "token.json"
 	tok, err := tokenFromFile(tokFile)
+
 	if err != nil {
 		tok = getTokenFromWeb(config)
 		saveToken(tokFile, tok)
@@ -35,8 +40,10 @@ func getClient(config *oauth2.Config) *http.Client {
 // Request a token from the web, then returns the retrieved token.
 func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Go to the following link in your browser then type the "+
-		"authorization code: \n%v\n", authURL)
+	fmt.Printf("Go to the following link in your browser: "+
+		"\n%v\n\nEnter the authorization code below. If the last page errors you can find the auth code as the query param 'code' of the final oAuth page URL", authURL)
+
+	fmt.Println("\n\nAuthorization Code:")
 
 	var authCode string
 	if _, err := fmt.Scan(&authCode); err != nil {
@@ -59,6 +66,11 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	defer f.Close()
 	tok := &oauth2.Token{}
 	err = json.NewDecoder(f).Decode(tok)
+
+	if tok.Expiry.Unix() < time.Now().Unix() {
+		return nil, errors.New("Could not reresh token")
+	}
+
 	return tok, err
 }
 
@@ -78,6 +90,28 @@ func main() {
 	rootDriveId := os.Getenv("ROOT_DRIVE_ID")
 	ctx := context.Background()
 	b, err := os.ReadFile("credentials.json")
+
+	_, fileFoundErr := os.Stat("./db.json")
+
+	if os.IsNotExist(fileFoundErr) {
+		emptyBrackets := []byte("{}")
+
+		os.WriteFile("./db.json", emptyBrackets, 0644)
+	}
+
+	absFilePath, _ := filepath.Abs("./db.json")
+
+	file, err := os.ReadFile(absFilePath)
+
+	DB := types.DBContainer{
+		Items: map[string]types.DBItem{},
+	}
+
+	if err != nil {
+		log.Printf("Could not open DB: %v", err.Error())
+	}
+
+	json.Unmarshal(file, &DB)
 
 	waitGroup := &sync.WaitGroup{}
 
@@ -100,8 +134,20 @@ func main() {
 		log.Fatalf("Unable to retrieve Drive client: %v", err)
 	}
 
-	rootFolder, err := srv.Files.Get(rootDriveId).Do()
+	rootFolder, rootDirErr := srv.Files.Get(rootDriveId).Do()
 
-	utils.GetFoldersFolders(rootFolder, srv, ".", waitGroup)
+	if rootDirErr != nil {
+		log.Fatalf("Could not get root dir, error: %v", rootDirErr.Error())
+	}
+
+	utils.GetFoldersFolders(rootFolder, srv, "./backup", waitGroup, &DB)
 	waitGroup.Wait()
+
+	dataBytes, _ := json.Marshal(&DB)
+
+	os.WriteFile(absFilePath, dataBytes, 0644)
+
+	uploadWaitGroup := &sync.WaitGroup{}
+
+	utils.CheckForUploadableFiles(srv, &DB, "./backup", uploadWaitGroup)
 }
